@@ -21,7 +21,7 @@ get_repos = function(org, filter=NULL, exclude=FALSE, full_repo=TRUE) {
   stopifnot(length(org)==1)
   stopifnot(length(filter)<=1)
 
-  res = map_chr(
+  res = purrr::map_chr(
     gh("GET /orgs/:org/repos", org = org, .token=get_github_token(), .limit=get_github_api_limit()),
     "name"
   )
@@ -32,7 +32,7 @@ get_repos = function(org, filter=NULL, exclude=FALSE, full_repo=TRUE) {
     else         res = res[subset]
   }
 
-  if (full_repo)
+  if (full_repo & length(res) > 0)
     res = paste0(org,"/",res)
 
   res
@@ -60,7 +60,7 @@ get_members = function(org, filter=NULL, exclude=FALSE) {
   stopifnot(length(org)==1)
   stopifnot(length(filter)<=1)
 
-  res = map_chr(
+  res = purrr::map_chr(
     gh("GET /orgs/:org/members", org=org, .token=get_github_token(), .limit=get_github_api_limit()),
     "login"
   )
@@ -96,10 +96,13 @@ get_pending_members = function(org, filter=NULL, exclude=FALSE) {
   stopifnot(length(org)==1)
   stopifnot(length(filter)<=1)
 
-  res = map_chr(
-    gh("GET /orgs/:org/invitations", org=org, .token=get_github_token(), .limit=get_github_api_limit()),
-    "login"
-  )
+  req = gh("GET /orgs/:org/invitations", org=org, .token=get_github_token(), .limit=get_github_api_limit())
+
+  res = if (req != "") {
+    purrr::map_chr(req, "login")
+  } else {
+    character()
+  }
 
   if (!is.null(filter)) {
     subset = grepl(filter,res)
@@ -112,7 +115,8 @@ get_pending_members = function(org, filter=NULL, exclude=FALSE) {
 
 #' Get organization teams
 #'
-#' \code{get_teams} returns a (filtered) data frame organization teams and their unique ids.
+#' \code{get_teams} returns a (filtered) data frame of teams in the organization with columns for
+#' their names (`name`) and their unique ids (`id`).
 #'
 #' @param org character, name of the GitHub organization.
 #' @param filter character, regex pattern for matching (or excluding) repos.
@@ -135,14 +139,20 @@ get_teams = function(org, filter=NULL, exclude=FALSE) {
 
   res = gh("GET /orgs/:org/teams", org=org, .token=get_github_token(), .limit=get_github_api_limit())
 
-  teams = data.frame(
-    name = map_chr(res, "name"),
-    id =  map_int(res, "id"),
-    stringsAsFactors = FALSE
-  )
+  teams = if (empty_result(res)) {
+    tibble::data_frame(
+      team = character(),
+      id   =  integer()
+    )
+  } else {
+    tibble::data_frame(
+      team = purrr::map_chr(res, "name"),
+      id   = purrr::map_int(res, "id")
+    )
+  }
 
   if (!is.null(filter)) {
-    subset = grepl(filter, teams$name)
+    subset = grepl(filter, teams$team)
     if (exclude) teams = teams[!subset,]
     else         teams = teams[subset,]
   }
@@ -154,11 +164,11 @@ get_teams = function(org, filter=NULL, exclude=FALSE) {
 get_teams_by_list = function(org, teams) {
   org_teams = get_teams(org)
 
-  sub = teams %in% org_teams$name
+  sub = teams %in% org_teams$team
   if (sum(sub) != length(teams))
     stop("Unable to find team(s): ", paste(teams[!sub], collapse=", "))
 
-  org_teams[org_teams$name %in% teams,]
+  org_teams[org_teams$team %in% teams,]
 }
 
 
@@ -167,7 +177,7 @@ get_teams_by_list = function(org, teams) {
 #' \code{get_team_repos} returns a (filtered) data frame of teams and their repos.
 #'
 #' @param org character, name of the GitHub organization.
-#' @param teams character or data frame, listing one or more team
+#' @param team character or data frame, listing one or more team
 #'
 #' @examples
 #' \dontrun{
@@ -178,37 +188,45 @@ get_teams_by_list = function(org, teams) {
 #'
 #' @export
 #'
-get_team_repos = function(org, teams = get_teams(org))
+get_team_repos = function(org, team = get_teams(org))
 {
   stopifnot(length(org) == 1)
 
-  if (is.character(teams))
-    teams = get_teams_by_list(org, teams)
+  if (is.character(team))
+    team = get_teams_by_list(org, team)
 
-  stopifnot(all(c("name","id") %in% names(teams)))
+  stopifnot(all(c("team","id") %in% names(team)))
 
-  map2_df(
-    teams$name, teams$id,
+  purrr::pmap_df(
+    team,
     function(team, id) {
       res = gh(
         "GET /teams/:id/repos", id=id,
         .token=get_github_token(), .limit=get_github_api_limit()
       )
-      data.frame(
-        team = team,
-        repo = map_chr(res, "full_name"),
-        stringsAsFactors = FALSE
-      )
+
+      if (empty_result(res)) {
+        tibble::data_frame(
+          team = character(),
+          repo = character()
+        )
+      } else {
+        tibble::data_frame(
+          team = team,
+          repo = purrr::map_chr(res, "full_name")
+        )
+      }
     }
   )
 }
 
-#' Get teams' members
+#' Get team members
 #'
 #' \code{get_team_members} returns a data frame of teams and their members.
 #'
 #' @param org character, name of the GitHub organization.
-#' @param teams character or data frame, listing one or more team
+#' @param team character or data frame, listing one or more team
+#' @param get_pending include pending team members
 #'
 #' @examples
 #' \dontrun{
@@ -219,91 +237,180 @@ get_team_repos = function(org, teams = get_teams(org))
 #'
 #' @export
 #'
-get_team_members = function(org, teams = get_teams(org))
+get_team_members = function(org, team = get_teams(org), get_pending = TRUE)
 {
   stopifnot(length(org) == 1)
 
-  if (is.character(teams))
-    teams = get_teams_by_list(org, teams)
+  pend = if (get_pending) {
+    res = get_pending_team_members(org, team)
+    res[["pending"]] = rep(FALSE, nrow(res))
+    res
+  } else {
+    tibble::data_frame(team = character(), github = character(), pending = logical())
+  }
 
-  stopifnot(all(c("name","id") %in% names(teams)))
+  if (is.character(team))
+    team = get_teams_by_list(org, team)
 
-  map2_df(
-    teams$name, teams$id,
+  stopifnot(all(c("team","id") %in% names(team)))
+
+  cur = purrr::pmap_df(
+    team,
     function(team, id) {
       res = gh(
         "GET /teams/:id/members",
         id=id, role = "all",
         .token=get_github_token(), .limit=get_github_api_limit()
       )
-      data_frame(
-        team = team,
-        member = map_chr(res, "login")
+
+      if (empty_result(res)) {
+        tibble::data_frame(
+          team = character(),
+          github = character(),
+          pending = logical()
+        )
+      } else {
+        tibble::data_frame(
+          team = team,
+          github = purrr::map_chr(res, "login"),
+          pending = FALSE
+        )
+      }
+    }
+  )
+
+  tibble::as_data_frame( rbind(cur, pend) )
+}
+
+#' Get pending team members
+#'
+#' \code{get_pending_team_members} returns a data frame of pending team members.
+#'
+#' @param org character, name of the GitHub organization.
+#' @param team character or data frame, listing one or more team
+#'
+#' @examples
+#' \dontrun{
+#' get_pending_team_members("ghclass",c("team01","team02"))
+#' }
+#'
+#' @family github organization related functions
+#'
+#' @export
+#'
+get_pending_team_members = function(org, team = get_teams(org))
+{
+  stopifnot(length(org) == 1)
+
+  if (is.character(team))
+    team = get_teams_by_list(org, team)
+
+  stopifnot(all(c("team","id") %in% names(team)))
+
+  purrr::pmap_df(
+    team,
+    function(team, id) {
+      res = gh(
+        "GET /teams/:id/invitations",
+        id=id,
+        .token=get_github_token(), .limit=get_github_api_limit()
       )
+
+      if (empty_result(res)) {
+        tibble::data_frame(
+          team = character(),
+          github = character()
+        )
+      } else {
+        tibble::data_frame(
+          team = team,
+          github = purrr::map_chr(res, "login")
+        )
+      }
     }
   )
 }
 
 
 
+
+#' Create team(s)
+#'
+#' \code{create_team} creates teams in your organization
+#'
+#' @param org character, name of the GitHub organization
+#' @param team character, listing one or more teams
+#' @param privacy character, level of privacy of teams, closed (visible to all
+#' members of the organization) or secret (only visible to organization owners
+#' and members of a team), default is closed
+#'
+#' @examples
+#' \dontrun{
+#' create_team("ghclass",c("team01","team01"))
+#' }
+#'
+#' @family github organization related functions
+#'
 #' @export
-create_teams = function(org, teams=character(), privacy = c("closed","secret"), verbose=TRUE)
+create_team = function(org, team = character(), privacy = c("closed","secret"), verbose = TRUE)
 {
   stopifnot(!missing(org))
-  teams = as.character(teams)
+  team = as.character(team)
   privacy = match.arg(privacy)
 
-  for(team in teams)
-  {
-    if (verbose)
-      cat("Creating", team, "...\n")
-
-    try({
-      gh("POST /orgs/:org/teams",
+  purrr::walk(
+    team,
+    function(team) {
+      res = safe_gh(
+        "POST /orgs/:org/teams",
          org=org, name=team, privacy=privacy,
-        .token=get_github_token())
-    })
-  }
+        .token=get_github_token()
+      )
+
+      check_result(res, sprintf("Failed to create team %s.", team), verbose)
+    }
+  )
 }
 
 #' @export
-add_team_members = function(org, users, teams, create_missing_teams=FALSE, verbose=TRUE)
+add_team_member = function(org, user, team, create_missing_teams=FALSE, verbose=TRUE)
 {
   stopifnot(!missing(org))
-  stopifnot(is.character(users) & length(users) >=1)
-  stopifnot(is.character(teams) & length(teams) >=1)
-  stopifnot(length(users)==length(teams) | length(teams) == 1)
+  stopifnot(is.character(user) & length(user) >=1)
+  stopifnot(is.character(team) & length(team) >=1)
 
-  info = data.frame(users, teams, stringsAsFactors = FALSE)
+  info = tibble::data_frame(
+    user,
+    team
+  )
 
   org_teams = get_teams(org)
 
-  new_teams = setdiff(unique(teams), org_teams$name)
-  if (length(new_teams) != 0) {
-    if (!create_missing_teams)
-      stop("Team(s) ", paste(new_teams,collapse=", "), " do(es) not exist in ", org,".")
-
-    create_teams(org=org, new_teams, verbose=verbose)
+  new_teams = setdiff(unique(team), org_teams[["team"]])
+  if (length(new_teams) != 0 & create_missing_teams) {
+    create_team(org, new_teams, verbose=verbose)
     org_teams = get_teams(org)
   }
 
-  teams = merge(
-    data.frame(name = teams, stringsAsFactors = FALSE),
-    org_teams, all.x = TRUE
+  info = merge(
+    info, org_teams,
+    by = "team", all.x = TRUE
   )
-  stopifnot(!any(is.na(teams$id)))
 
-  pwalk(
-    list(users, teams$name, teams$id),
+  missing_teams = is.na(info[["id"]])
+  if (any(missing_teams))
+    stop("Team(s) ", paste(new_teams,collapse=", "), " do(es) not exist in ", org, ".", call. = FALSE)
+
+  purrr::pwalk(
+    info,
     function(user, team, id) {
-      if (verbose)
-        message("Adding ", user, " to ", team, " ...\n", sep="")
+      res = safe_gh(
+        "PUT /teams/:id/memberships/:username",
+        id=id, username=user, role="member",
+        .token=get_github_token()
+      )
 
-      try({
-        gh("PUT /teams/:id/memberships/:username",
-           id=id, username=user, role="member",
-          .token=get_github_token())
-      })
+      check_result(res, sprintf("Failed to add %s to %s in %s.", user, team, org), verbose)
     }
   )
 }
@@ -312,34 +419,53 @@ add_team_members = function(org, users, teams, create_missing_teams=FALSE, verbo
 
 
 #' @export
-check_users_exist = function(users)
+check_user_exists = function(user)
 {
   check_user = function(user) {
     gh("/users/:username", username=user, .token=get_github_token())
     TRUE
   }
 
-  map_lgl(users, possibly(check_user, FALSE))
+  purrr::map_lgl(user, purrr::possibly(check_user, FALSE))
 }
 
+
+#' Invite user(s)
+#'
+#' \code{invite_user} invites users to your organization
+#'
+#' @param org character, name of the GitHub organization.
+#' @param user character or data frame, listing one or more users
+#'
+#' @examples
+#' \dontrun{
+#' invite_user("ghclass",c("user01","user02"))
+#' }
+#'
+#' @family github organization related functions
+#'
 #' @export
-invite_users = function(org, users, verbose=TRUE, exclude_pending = FALSE)
+invite_user = function(org, user, verbose=TRUE, exclude_pending = FALSE)
 {
-  users = tolower(users)
+  stopifnot(length(org) == 1)
+
+  user = tolower(user)
   members = tolower(get_members(org))
   pending = tolower(get_pending_members(org))
 
-  need_invite = setdiff(users, c(members, pending))
+  need_invite = setdiff(user, c(members, pending))
 
-  for(user in need_invite)
-  {
-    if (verbose)
-      cat("Adding ", user, " to ", org, " ...\n", sep="")
+  purrr::walk(
+    need_invite,
+    function(user) {
+      res = safe_gh(
+        "PUT /orgs/:org/memberships/:username",
+        org=org, username=user, role="member",
+        .token=get_github_token()
+      )
 
-    try({
-      gh("PUT /orgs/:org/memberships/:username",
-         org=org, username=user, role="member",
-         .token=get_github_token())
-    })
-  }
+      fail = sprintf("Inviting %s to %s failed.", user, org)
+      check_result(res, fail, verbose=verbose)
+    }
+  )
 }

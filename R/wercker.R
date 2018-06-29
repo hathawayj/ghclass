@@ -1,8 +1,8 @@
 add_wercker_build_pipeline = function(app_id)
 {
-  req = POST(
+  req = httr::POST(
     "https://app.wercker.com/api/v3/pipelines",
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json",
@@ -15,9 +15,9 @@ add_wercker_build_pipeline = function(app_id)
       type = "git"
     )
   )
-  stop_for_status(req)
+  httr::stop_for_status(req)
 
-  res = content(req)
+  res = httr::content(req)
   stopifnot(!is.null(res$id))
 
   res$id
@@ -27,9 +27,9 @@ add_wercker_app = function(repo, org_id, privacy = c("public", "private"), provi
 {
   privacy = match.arg(privacy)
 
-  req = POST(
+  req = httr::POST(
     "https://app.wercker.com/api/v2/applications",
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json",
@@ -42,9 +42,9 @@ add_wercker_app = function(repo, org_id, privacy = c("public", "private"), provi
       stack = "6" # Docker
     )
   )
-  stop_for_status(req)
+  httr::stop_for_status(req)
 
-  res = content(req)
+  res = httr::content(req)
   stopifnot(!is.null(res$success))
 
   app_id = res$data$id
@@ -67,9 +67,9 @@ add_wercker_app = function(repo, org_id, privacy = c("public", "private"), provi
 
 run_wercker_pipeline = function(pipeline_id)
 {
-  req = POST(
+  req = httr::POST(
     "https://app.wercker.com/api/v3/runs",
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json",
@@ -77,8 +77,8 @@ run_wercker_pipeline = function(pipeline_id)
       pipelineId = pipeline_id
     )
   )
-  stop_for_status(req)
-  res = content(req)
+  httr::stop_for_status(req)
+  res = httr::content(req)
   stopifnot(!is.null(res$id))
 
   res$id
@@ -86,22 +86,22 @@ run_wercker_pipeline = function(pipeline_id)
 
 get_wercker_deploy_key = function()
 {
-  req = POST(
+  req = httr::POST(
     paste0("https://app.wercker.com/api/v2/checkoutKeys"),
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json"
   )
-  stop_for_status(req)
-  content(req)
+  httr::stop_for_status(req)
+  httr::content(req)
 }
 
 add_key_to_github = function(repo, key_id, provider = "github")
 {
-  req = POST(
+  req = httr::POST(
     paste0("https://app.wercker.com/api/v2/checkoutKeys/",key_id,"/link"),
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json",
@@ -111,16 +111,16 @@ add_key_to_github = function(repo, key_id, provider = "github")
       scmProvider = provider
     )
   )
-  stop_for_status(req)
-  res = content(req)
+  httr::stop_for_status(req)
+  res = httr::content(req)
   stopifnot(!is.null(res$success))
 }
 
 add_key_to_app = function(app_id, key_id, type="unique")
 {
-  req = POST(
+  req = httr::POST(
     paste0("https://app.wercker.com/api/v2/applications/",app_id,"/checkoutKey"),
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json",
@@ -129,8 +129,8 @@ add_key_to_app = function(app_id, key_id, type="unique")
       checkoutKeyType = type
     )
   )
-  stop_for_status(req)
-  res = content(req)
+  httr::stop_for_status(req)
+  res = httr::content(req)
   stopifnot(!is.null(res$success))
 }
 
@@ -144,238 +144,271 @@ add_wercker_deploy_key = function(repo, app_id, provider = "github")
 #' @export
 get_wercker_whoami = function()
 {
-  req = GET(
+  req = httr::GET(
     paste0("https://app.wercker.com/api/v2/profile"),
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json"
   )
-  stop_for_status(req)
-  content(req, as="text") %>%
-    jsonlite::fromJSON()
+  httr::stop_for_status(req)
+  res = httr::content(req, as="text")
+  jsonlite::fromJSON(res)
 }
 
 #' @export
 get_wercker_orgs = function()
 {
-  req = GET(
+  req = httr::GET(
     paste0("https://app.wercker.com/api/v2/users/me/organizations"),
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json"
   )
-  stop_for_status(req)
-  content(req, as="text") %>%
-    jsonlite::fromJSON() %>%
-    select(-allowedActions)
+  httr::stop_for_status(req)
+
+  res = httr::content(req, as="text")
+  res = jsonlite::fromJSON(res)
+  res[-which(names(res) == "allowedActions")]
 }
 
 #' @export
 get_wercker_apps = function(owner)
 {
-  req = GET(
+  req = httr::GET(
     paste0("https://app.wercker.com/api/v3/applications/", owner, "?limit=100"),
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json"
   )
-  stop_for_status(req)
-  content(req, as="text") %>% jsonlite::fromJSON()
+  httr::stop_for_status(req)
+  res = httr::content(req, as="text")
+  jsonlite::fromJSON(res)
 }
 
 get_wercker_org_id = function(org)
 {
-  orgs = get_wercker_orgs() %>%
-    filter(username == org)
+  orgs = get_wercker_orgs()
+  orgs = orgs[orgs$username == org,]
 
   if (nrow(orgs) != 1)
-    stop("Unable to find organization called ", wercker_org, " on wercker.")
+    stop("Unable to find organization called ", org, " on wercker.", call. = FALSE)
 
-  orgs$id
+  orgs[["id"]]
 }
 
-get_wercker_app_ids = function(repos)
+get_wercker_app_id = function(repo)
 {
-  apps = map(repos, get_wercker_app_info)
-  map_chr(apps, "id")
+  app = purrr::map(repo, get_wercker_app_info)
+  purrr::map_chr(app, "id")
 }
 
 
 get_wercker_app_info = function(repo)
 {
-  req = GET(
+  stopifnot(length(repo) == 1)
+  require_valid_repo(repo)
+
+  req = httr::GET(
     paste0("https://app.wercker.com/api/v3/applications/", repo),
-    add_headers(
+    httr::add_headers(
       Authorization = paste("Bearer", get_wercker_token())
     ),
     encode = "json"
   )
-  stop_for_status(req)
-  content(req)
+  httr::stop_for_status(req)
+  httr::content(req)
 }
 
 
-get_wercker_badge_key = function(repos)
-{
-  app_info = map(repos, get_wercker_app_info)
-  data_frame(repo = repos, badge_key = map_chr(app_info, "badgeKey"))
-}
+
+
 
 #' @export
-get_wercker_badges = function(repos, size = c("small", "large"), branch = "master")
+add_wercker = function(repo, wercker_org, add_badge=TRUE, verbose=TRUE)
 {
-  size = match.arg(size)
-  size_lookup = c("small" = "s", "large" = "m")
-
-  get_wercker_badge_key(repos) %>%
-    mutate(
-      img_url = sprintf("https://app.wercker.com/status/%s/%s/%s", badge_key, size_lookup[size], branch),
-      app_url = sprintf("https://app.wercker.com/project/byKey/%s", badge_key)
-    ) %>%
-    mutate(
-      markdown_link = sprintf('[![wercker status](%s "wercker status")](%s)', img_url, app_url),
-      html_link = sprintf('<a href="%s"><img alt="Wercker status" src="%s"></a>', app_url, img_url)
-    )
-}
-
-#' @export
-add_wercker = function(repos, wercker_org, add_badges=TRUE, verbose=TRUE)
-{
-  require_valid_repo(repos)
+  require_valid_repo(repo)
   org_id = get_wercker_org_id(wercker_org)
 
-  existing_apps = get_wercker_apps(wercker_org)
+  existing_apps = get_wercker_apps(wercker_org)[["name"]]
 
-  for(repo in repos)
-  {
-    if (get_repo_name(repo) %in% existing_apps$name)
-    {
-      if (verbose)
-        cat("Skipping, app already exists for", repo, "...\n")
-      next
-    }
-
-    if (verbose)
-      cat("Creating wercker app for", repo, "...\n")
-
-    add_wercker_app(repo, org_id)
-  }
-
-  if (add_badges)
-    add_wercker_badges(repos)
-}
-
-#' @export
-add_wercker_badges = function(repos, badges=get_wercker_badges(repos)$markdown_link, branch = "master",
-                      message = "Adding wercker badge", verbose=TRUE)
-{
-  stopifnot(all(valid_repo(repos, require_owner = TRUE)))
-
-  repo_name  = get_repo_name(repos)
-  repo_owner = get_repo_owner(repos)
-
-  for(i in seq_along(repos))
-  {
-    repo = repo_name[i]
-    owner = repo_owner[i]
-    file = "README.md"
-
-    readme = try({
-      gh("GET /repos/:owner/:repo/readme",
-         owner = owner, repo = repo, ref = branch,
-         .token=get_github_token(), .limit=get_github_api_limit())
-    }, silent = TRUE)
-
-    tryCatch(
-      {
-        if (inherits(readme, "try-error")) # README.md does not exist
-        {
-          file = "README.md"
-          content = paste0(badges[i],"\n\n") %>% charToRaw() %>% base64enc::base64encode()
-
-          gh("PUT /repos/:owner/:repo/contents/:path",
-             owner = owner, repo = repo, path=file,
-             message = message, content = content,
-             branch = branch, .token=get_github_token())
-        } else {                           # README.md exists
-          new_readme = base64enc::base64decode(readme$content) %>% rawToChar()
-          file = readme$path
-          content = paste0(badges[i],"\n\n", new_readme) %>% charToRaw() %>% base64enc::base64encode()
-
-          gh("PUT /repos/:owner/:repo/contents/:path",
-             owner = owner, repo = repo, path=file,
-             message = message, content = content,
-             sha = readme$sha, branch = branch,
-             .token=get_github_token())
-        }
-
+  purrr::walk(
+    repo,
+    function(repo) {
+      if (get_repo_name(repo) %in% existing_apps) {
         if (verbose)
-          cat("Added badge to ", repo, " ...\n", sep="")
-      },
-      error = function(e)
-        message("Adding badge to ", repo, " failed.")
-    )
-  }
+          cat("Skipping, app already exists for", repo, "...\n")
+        return()
+      }
+
+      if (verbose)
+        cat("Creating wercker app for", repo, "...\n")
+
+      add_wercker_app(repo, org_id)
+      if (add_badge)
+        add_wercker_badge(repo)
+    }
+  )
 }
 
 
-add_wercker_env_var = function(repo, key, value, protected=TRUE)
+
+get_wercker_badge_key = function(repo)
 {
-  req = POST(
-    "https://app.wercker.com/api/v3/envvars",
-    add_headers(
-      Authorization = paste("Bearer", get_wercker_token())
-    ),
-    encode = "json",
-    body = list(
-      key       = as.character(key),
-      protected = protected,
-      scope     = "application",
-      target    = get_wercker_app_ids(repo),
-      value     = as.character(value)
-    )
-  )
-
-  stop_for_status(req)
-
-  res = content(req)
-  stopifnot(!is.null(res$id))
-
-  invisible(res$id)
+  app_info = purrr::map(repo, get_wercker_app_info)
+  purrr::map_chr(app_info, "badgeKey")
 }
 
 #' @export
-add_wercker_env_vars = function(repos, keys, values, protected)
+get_wercker_badge = function(repo, size = "small", type = "markdown", branch = "master")
 {
-  invisible(pmap(
-    list(repos, keys, values, protected),
-    add_wercker_env_var
-  ))
-}
+  size = match.arg(size, c("small", "large"), several.ok = TRUE)
+  type = match.arg(type, c("markdown", "html"), several.ok = TRUE)
 
-
-
-WAPI_env_vars = function(repo)
-{
-  if (valid_repo(repo))
-    repo = get_wercker_app_ids(repo)
-
-  req = GET(
-    paste0("https://app.wercker.com/api/v3/envvars?scope=application&target=", repo),
-    add_headers(
-      Authorization = paste("Bearer", get_wercker_token())
-    ),
-    encode = "json"
+  size = switch(
+    size,
+    small = "s",
+    large = "m"
   )
-  stop_for_status(req)
-  content(req)$results[[1]]
+
+  key = get_wercker_badge_key(repo)
+
+  purrr::pmap_chr(
+    list(size, type, key, branch),
+    function(size, type, key, branch) {
+      img_url = sprintf("https://app.wercker.com/status/%s/%s/%s", key, size, branch)
+      app_url = sprintf("https://app.wercker.com/project/byKey/%s", key)
+
+      if (type == "markdown")
+        sprintf('[![wercker status](%s "wercker status")](%s)', img_url, app_url)
+      else
+        sprintf('<a href="%s"><img alt="Wercker status" src="%s"></a>', app_url, img_url)
+    }
+  )
 }
+
+
+strip_existing_badge = function(content)
+{
+  md_badge_pattern = "\\[\\!\\[wercker status\\]\\(.*? \"wercker status\"\\)\\]\\(.*?\\)\n*"
+  html_badge_pattern = "<a href=\".*?\"><img alt=\"Wercker status\" src=\".*?\"></a>"
+
+  content = gsub(md_badge_pattern, "", content)
+  content = gsub(html_badge_pattern, "", content)
+}
+
+
+
+
 
 #' @export
-get_wercker_env_vars = function(repos)
+add_wercker_badge = function(repo, badge = get_wercker_badge(repo, branch = branch),
+                             branch = "master", message = "Adding wercker badge",
+                             strip_existing_badge = TRUE, verbose = TRUE)
 {
-  map_df(repos, WAPI_env_vars)
+  require_valid_repo(repo)
+
+  res = purrr::pmap(
+    list(repo, badge, branch, message),
+    function(repo, badge, branch, message) {
+
+      if (verbose)
+        message("Adding badge to ", repo, " ...")
+
+      readme = get_readme(repo, branch)
+
+      if (is.null(readme)) { # README.md does not exist
+        content = paste0(badge,"\n\n")
+        gh_file = "README.md"
+      } else {
+        cur_readme = rawToChar(base64enc::base64decode(readme$content))
+        if (strip_existing_badge)
+          cur_readme = strip_existing_badge(cur_readme)
+
+        gh_file = purrr::pluck(readme,"path")
+        content = paste0(badge, "\n\n", cur_readme)
+      }
+
+      put_file(repo, gh_file, charToRaw(content), message, branch)
+    }
+  )
+
+  purrr::walk2(
+    repo[check_errors(res)], get_errors(res),
+    function(repo, error) {
+      msg = sprintf("Adding badge to %s failed.\n", repo)
+      if (verbose) {
+        bad_repos = paste0(repo, ": ", error)
+        msg = paste0(msg, format_list(bad_repos))
+      }
+
+      warning(msg, call. = FALSE, immediate. = TRUE)
+    }
+  )
+}
+
+
+
+
+
+
+
+#' @export
+add_wercker_env_var = function(repo, key, value, protected=FALSE)
+{
+  id = purrr::pmap_chr(
+    list(repo, key, value, protected),
+    function(repo, key, value, protected=TRUE) {
+      req = httr::POST(
+        "https://app.wercker.com/api/v3/envvars",
+        httr::add_headers(
+          Authorization = paste("Bearer", get_wercker_token())
+        ),
+        encode = "json",
+        body = list(
+          key       = as.character(key),
+          protected = protected,
+          scope     = "application",
+          target    = get_wercker_app_id(repo),
+          value     = as.character(value)
+        )
+      )
+
+      httr::stop_for_status(req)
+
+      purrr::pluck(httr::content(req), "id", .default = NA)
+    }
+  )
+
+  invisible(id)
+}
+
+
+#' @export
+get_wercker_env_vars = function(repo)
+{
+  require_valid_repo(repo)
+
+  purrr::map2_df(
+    repo, get_wercker_app_id(repo),
+    function(repo, id)
+    {
+      req = httr::GET(
+        paste0("https://app.wercker.com/api/v3/envvars?scope=application&target=", id),
+        httr::add_headers(
+          Authorization = paste("Bearer", get_wercker_token())
+        ),
+        encode = "json"
+      )
+      httr::stop_for_status(req)
+
+      c(
+        repo = repo,
+        repo_id = id,
+        purrr::pluck(httr::content(req), "results", 1L)
+      )
+    }
+  )
 }

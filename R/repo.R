@@ -8,9 +8,9 @@ check_repos = function(repos)
     TRUE
   }
 
-  map2_lgl(
+  purrr::map2_lgl(
     get_repo_owner(repos), get_repo_name(repos),
-    possibly(exists, FALSE)
+    purrr::possibly(exists, FALSE)
   )
 }
 
@@ -18,133 +18,118 @@ check_repos = function(repos)
 #'
 fix_repo_name = function(repos)
 {
-  repos %>%
-    str_replace_all(" ", "_") %>%
-    str_replace_all("[^A-Za-z0-9_.-]+","-")
+  repos = stringr::str_replace_all(repos, " ", "_")
+  stringr::str_replace_all(repos, "[^A-Za-z0-9_.-]+","-")
 }
 
+#' Creeate individual repositories
+#'
+#' \code{create_individual_repo} creates repos for each student for a given
+#' assignment
+#'
+#' @param org character, name of the GitHub organization.
+#' @param user character or data frame, listing one or more users
+#' @param prefix character, resulting repo name will start with this character string
+#' @param suffix character, resulting repo name will end with this character string
+#'
+#' @examples
+#' \dontrun{
+#' create_individual_repo("ghclass",c("user01","user02"))
+#' }
+#'
+#' @family github organization related functions
+#'
 #' @export
 #'
-create_team_repos = function(org, teams, prefix="", suffix="", verbose=TRUE, delay=0.2)
-{
+create_individual_repo = function(org, user,
+                                  prefix="", suffix="", verbose=TRUE,
+                                  auto_init=FALSE, gitignore_template="R") {
   if (prefix == "" & suffix == "")
     stop("Either a prefix or a suffix must be specified")
 
+  org_users = get_members(org)
+
+  purrr::walk(
+    user,
+    function(user) {
+      repo_name = fix_repo_name(paste0(prefix, user, suffix))
+
+      if (check_repos(repo_name)) {
+        warning("Repo ", org,"/",repo_name, " already exists", call. = FALSE, noBreaks. = TRUE)
+        return(invisible(NULL))
+      }
+
+      if (verbose)
+        message("Creating repo ", org, "/", repo_name, " ...", sep="")
+
+      try({
+        gh("POST /orgs/:org/repos",
+           org = org,
+           name=repo_name, private=TRUE,
+           auto_init=auto_init,
+           gitignore_template=gitignore_template,
+           .token=get_github_token())
+      })
+
+      try({
+        gh("PUT /repos/:owner/:repo/collaborators/:username",
+           owner = org, repo = repo_name, username = user,
+           permission="push",
+           .token=get_github_token())
+      })
+    }
+  )
+}
+
+
+#' @export
+#'
+create_team_repo = function(org, team, prefix="", suffix="", verbose=TRUE)
+{
   org_teams = get_teams(org)
 
-  if (missing(teams)) {
-    teams = org_teams
-  } else {
-    teams = left_join(
-      data.frame(name = teams, stringsAsFactors = FALSE),
-      org_teams,
-      by = "name")
+  if (is.character(team)) {
+    team = merge(
+      tibble::data_frame(team = team), org_teams,
+      by = "team", all.x = TRUE
+    )
   }
 
-  missing_ids = is.na(teams$id)
+  stopifnot(is.data.frame(team) & all( c("team","id") %in% names(team)))
+
+  missing_ids = is.na(team[["id"]])
   if (any(missing_ids))
-    stop("Unable to locate team(s): ", paste(teams$name[missing_ids], collapse=", "))
+    stop("Unable to locate team(s): ", paste(team[["team"]][missing_ids], collapse=", "), call. = FALSE)
 
-  for(i in seq_len(nrow(teams)))
-  {
-    team = teams$name[i]
-    id = teams$id[i]
+  purrr::pwalk(
+    team,
+    function(team, id) {
+      repo_name = fix_repo_name( paste0(prefix, team, suffix) )
 
-    repo_name = paste0(prefix, team, suffix) %>% fix_repo_name()
+      #if (verbose)
+      #  message("Creating repo ", org, "/", repo_name, " ...", sep="")
 
-    if (verbose)
-      cat("Creating ", repo_name, " for ",team," ...\n",sep="")
+      res = purrr::safely(function() {
+        gh("POST /orgs/:org/repos",
+           org = org,
+           name=repo_name, private=TRUE, team_id=id,
+           auto_init=TRUE, gitignore_template="R",
+           .token=get_github_token())
 
-    try({
-      gh("POST /orgs/:org/repos",
-         org = org,
-         name=repo_name, private=TRUE, team_id=id,
-         auto_init=TRUE, gitignore_template="R",
-         .token=get_github_token())
-    })
+        gh("PUT /teams/:id/repos/:org/:repo",
+           id = id, org = org, repo = repo_name,
+           permission="push",
+           .token=get_github_token())
+      })()
 
-    Sys.sleep(delay)
-
-    try({
-      gh("PUT /teams/:id/repos/:org/:repo",
-         id = id, org = org, repo = repo_name,
-         permission="push",
-         .token=get_github_token())
-    })
-  }
+      check_result(res, sprintf("Failed to create team repo %s.", repo_name), verbose)
+    }
+  )
 }
 
-#' @export
-get_file = function(repo, file, branch="master")
-{
-  repo_name  = get_repo_name(repo)
-  repo_owner = get_repo_owner(repo)
 
-  gh("GET /repos/:owner/:repo/contents/:path",
-     owner = repo_owner, repo = repo_name, path=file,
-     ref = branch,
-     .token=get_github_token(), .limit=get_github_api_limit())
-}
 
-#' @export
-check_files = function(repos, files, branch = "master")
-{
-  file_exists = function(repo, file, branch)
-  {
-    get_file(repo,file,branch)
-    TRUE
-  }
 
-  pmap_lgl(list(repos, files, branch), possibly(file_exists,FALSE))
-}
-
-#' @export
-add_files = function(repos, message, files, branch = "master", preserve_path=FALSE, verbose=TRUE)
-{
-  stopifnot(all(file.exists(files)))
-  stopifnot(all(check_repos(repos)))
-
-  repo_name  = get_repo_name(repos)
-  repo_owner = get_repo_owner(repos)
-
-  walk(repos, function(repo) {
-
-    name = get_repo_name(repo)
-    owner = get_repo_owner(repo)
-
-    if (verbose)
-      cat("Adding files to", repo, "...\n")
-
-    walk(files, function(file) {
-
-      gh_path = file
-      if (!preserve_path)
-        gh_path = basename(file)
-
-      content = base64enc::base64encode(file)
-
-      tryCatch({
-        if (check_files(repo, gh_path, branch)) {
-          gh_file = get_file(repo, gh_path, branch)
-          gh("PUT /repos/:owner/:repo/contents/:path",
-             owner = owner, repo = name, path=gh_path,
-             message = message, content = content, branch = branch,
-             sha = gh_file$sha,
-              .token=get_github_token())
-        } else {
-          gh("PUT /repos/:owner/:repo/contents/:path",
-             owner = owner, repo = name, path=gh_path,
-             message = message, content = content, branch = branch,
-             .token=get_github_token())
-        }
-      }, error = function(e) {
-          message("Adding ", file, " to ", repo, " failed.")
-          if (verbose)
-            print(e)
-      })
-    })
-  })
-}
 
 
 
@@ -175,16 +160,19 @@ mirror_repo = function(source_repo, target_repos, verbose=TRUE)
   stopifnot(length(repo_dir) == 1)
   setwd(repo_dir)
 
-  for(repo in target_repos)
-  {
-    if (verbose)
-      cat("Mirroring ", source_repo, " to ", repo,"...\n", sep="")
+  purrr::walk(
+    target_repos,
+    function(repo) {
 
-    try({
-      system(paste0(git, " push --mirror ", get_repo_url(repo)), intern = FALSE,
-             wait = TRUE, ignore.stdout = TRUE, ignore.stderr = TRUE)
-    })
-  }
+      if (verbose)
+        cat("Mirroring ", source_repo, " to ", repo,"...\n", sep="")
+
+      try({
+        system(paste0(git, " push --mirror ", get_repo_url(repo)), intern = FALSE,
+               wait = TRUE, ignore.stdout = TRUE, ignore.stderr = TRUE)
+      })
+    }
+  )
 
   if (verbose)
     cat("Cleaning up ...\n")
@@ -193,3 +181,183 @@ mirror_repo = function(source_repo, target_repos, verbose=TRUE)
 }
 
 
+get_commit = function(repo, ref="HEAD") {
+  stopifnot(length(repo)==1)
+
+  name = get_repo_name(repo)
+  owner = get_repo_owner(repo)
+
+  gh("GET /repos/:owner/:repo/commits/:ref",
+     owner = owner, repo = name, ref = ref,
+     .token=get_github_token())
+}
+
+#' @export
+branch_repo = function(repos, branch, verbose=TRUE)
+{
+  purrr::walk2(
+    repos, branch,
+    function(repo, branch) {
+
+      tryCatch({
+        if (!check_repos(repo))
+          stop(repo, "does not exist.")
+
+        name = get_repo_name(repo)
+        owner = get_repo_owner(repo)
+
+        head = get_commit(repo)
+
+        gh("POST /repos/:owner/:repo/git/refs",
+           owner = owner, repo = name,
+           ref = paste0("refs/heads/",branch),
+           sha = head$sha,
+           .token=get_github_token())
+      }, error = function(e) {
+        warning("Failed to create ", repo, "@", branch, " branch. (", e$content$message, ")", call. = FALSE)
+      })
+    }
+  )
+}
+
+
+create_pull_request = function(repo, title, base, head = "master", body = "", verbose = TRUE) {
+
+  stopifnot(!missing(repo))
+  stopifnot(!missing(base))
+  stopifnot(!missing(head))
+  stopifnot(!missing(title))
+
+  purrr::pwalk(
+    list(repo, base, head, title, body),
+    function(repo, base, head, title, body) {
+      res = safe_gh(
+        "POST /repos/:owner/:repo/pulls",
+        owner = get_repo_owner(repo), repo = get_repo_name(repo),
+        base = base, head = head, title = title, body = body,
+        .token = get_github_token()
+      )
+
+      check_result(
+        res,
+        sprintf("Failed to create pull request for %s (%s => %s).", repo, base, head),
+        verbose
+      )
+    }
+  )
+}
+
+
+#' @export
+style_repo = function(repo, files=c("*.R","*.Rmd"), branch="styler", base="master",
+                      create_pull_request = TRUE, tag_collaborators = TRUE,
+                      git = require_git(), verbose=TRUE) {
+  stopifnot(styler_available())
+  stopifnot(length(repo) >= 1)
+
+  dir = file.path(tempdir(),"styler")
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+
+  on.exit({
+    unlink(file.path(dir), recursive = TRUE)
+  })
+
+  purrr::walk2(
+    repo, branch,
+    function(repo, branch) {
+      ## TODO add base to branch
+      branch_repo(repo, branch, verbose = FALSE)
+      path = clone_repo(repo, local_path = dir, branch = branch)
+
+      file_paths = unlist(purrr::map(files, ~ fs::dir_ls(path, recursive = TRUE, glob = .x)),
+                          use.names = FALSE)
+
+      cur_dir = getwd()
+      setwd(path)
+
+      on.exit({
+        setwd(cur_dir)
+      })
+
+      msg = c("Results of running styler:\n", utils::capture.output( styler::style_file(file_paths) ))
+      writeLines(msg, "commit_msg")
+
+      system(paste0(git, " add ", paste0(file_paths, collapse=" ")),
+             intern = FALSE, wait = TRUE, ignore.stdout = TRUE, ignore.stderr = TRUE)
+
+      system(paste0(git, " commit -F commit_msg"),
+             intern = FALSE, wait = TRUE, ignore.stdout = TRUE, ignore.stderr = TRUE)
+
+      system(paste0(git, " push"),
+             intern = FALSE, wait = TRUE, ignore.stdout = TRUE, ignore.stderr = TRUE)
+
+      if (create_pull_request) {
+
+        msg = paste(c(
+          "This pull request contains the results of running the automated R code formating tool styler ",
+          "on your repo. Styling is based on Hadley's [R style guide](http://adv-r.had.co.nz/Style.html)\n",
+          "\n",
+          "Click on the commit below to see details of recommended changes. It is not necessary that your ",
+          "code cleanly pass these checks, but if there is a large number of significant changes suggested ",
+          "you should review the style guide with an eye towards potentially improving your code formatting."
+        ), collapse="")
+
+        if (tag_collaborators)
+          msg = paste0(msg,"\n\n@", get_collaborators(repo)[[1]], collapse=", ")
+
+        create_pull_request(
+          repo, title="styler revisions",
+          base = base, head = branch,
+          body = paste0(msg, collapse="\n"),
+          verbose = verbose
+        )
+      }
+    }
+  )
+}
+
+#' @export
+get_admins = function(org, verbose = FALSE) {
+
+  purrr::map(
+    org,
+    function(org) {
+      res = gh(
+        "GET /orgs/:org/members",
+        org = org,
+        role = "admin",
+        .token = get_github_token(),
+        .limit = get_github_api_limit()
+      )
+
+      purrr::map_chr(res, "login")
+    }
+  )
+}
+
+#' @export
+get_collaborators = function(repo, include_admins = FALSE, verbose = FALSE) {
+
+  stopifnot(!missing(repo))
+
+  admins = list(NULL)
+  if (!include_admins)
+    admins = get_admins(get_repo_owner(repo))
+
+  purrr::map2(
+    repo, admins,
+    function(repo, admins) {
+      res = safe_gh(
+        "GET /repos/:owner/:repo/collaborators",
+        owner = get_repo_owner(repo), repo = get_repo_name(repo),
+        affiliation = "all",
+        .token = get_github_token(),
+        .limit = get_github_api_limit()
+      )
+
+      check_result(res, sprintf("Unable to retrieve collaborators for %s.", repo), verbose)
+
+      setdiff(purrr::map_chr(res$result, "login"), admins)
+    }
+  )
+}

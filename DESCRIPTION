@@ -1,10 +1,17 @@
 Package: ghclass
-Title: Tools for managing classes with gitbub
+Title: Tools for managing classes with github
 Version: 0.1.0
-Authors@R: person("Colin", "Rundel", email = "rundel@gmail.com", role = c("aut", "cre"))
-Description: Tools for managing classes with gitbub
-Depends: R (>= 3.4.0), gh, magrittr, dplyr, stringr, purrr, yaml, base64enc, httr, jsonlite
-License: GPL3
+Authors@R: c(person("Colin", "Rundel", email = "rundel@gmail.com", role = c("aut", "cre")),
+             person("Mine", "Cetinkaya-Rundel", email = "mine@rstudio.com", role = c("aut")))
+Description: Tools for managing classes with github.
+Depends: R (>= 3.4.0), gh
+Imports: fs, stringr, purrr, yaml, base64enc, httr, jsonlite, tibble
+Suggests: styler, knitr, rmarkdown
+License: GPL-3
 Encoding: UTF-8
+URL: https://rundel.github.io/ghclass/
+BugReports: https://github.com/rundel/ghclass/issues
 LazyData: true
+Roxygen: list(markdown = TRUE)
 RoxygenNote: 6.0.1
+VignetteBuilder: knitr

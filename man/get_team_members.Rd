@@ -2,14 +2,16 @@
 % Please edit documentation in R/org.R
 \name{get_team_members}
 \alias{get_team_members}
-\title{Get teams' members}
+\title{Get team members}
 \usage{
-get_team_members(org, teams = get_teams(org))
+get_team_members(org, team = get_teams(org), get_pending = TRUE)
 }
 \arguments{
 \item{org}{character, name of the GitHub organization.}
 
-\item{teams}{character or data frame, listing one or more team}
+\item{team}{character or data frame, listing one or more team}
+
+\item{get_pending}{include pending team members}
 }
 \description{
 \code{get_team_members} returns a data frame of teams and their members.
@@ -21,8 +23,10 @@ get_team_members("ghclass",c("team01","team02"))
 
 }
 \seealso{
-Other github organization related functions: \code{\link{get_members}},
+Other github organization related functions: \code{\link{create_individual_repo}},
+  \code{\link{create_team}}, \code{\link{get_members}},
   \code{\link{get_pending_members}},
+  \code{\link{get_pending_team_members}},
   \code{\link{get_repos}}, \code{\link{get_team_repos}},
-  \code{\link{get_teams}}
+  \code{\link{get_teams}}, \code{\link{invite_user}}
 }
